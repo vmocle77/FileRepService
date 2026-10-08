@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Repository Servicer</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <!-- Include UTIF.js for browser support of .tif / .tiff images -->
+    <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 40px; background: #f4f6f9; color: #333; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .upload-zone { border: 2px dashed #3498db; background: #f8fbfe; border-radius: 8px; padding: 30px; text-align: center; margin-bottom: 20px; cursor: pointer; }
+        .upload-zone.dragover { background: #ebf5fc; border-color: #2980b9; }
+        .btn-row { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+        .file-input-label { background: #3498db; color: white; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; display: inline-block; }
+        input[type="file"] { display: none; }
+        .actions-bar { display: flex; justify-content: space-between; align-items: center; background: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .top-nav-bar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 15px; }
+        .nav-left { flex-grow: 1; min-width: 0; word-break: break-word; }
+        .nav-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; color: #7f8c8d; }
+        .delete-btn { background: #e74c3c; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+        .action-link { margin-right: 10px; font-weight: bold; text-decoration: none; cursor: pointer; }
+        .download-link { color: #2ecc71; }
+        .preview-link { color: #3498db; }
+
+        /* Map & Modal Button Styles */
+        .map-btn { background: #8e44ad; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+        .map-btn:hover { background: #732d91; }
+
+        /* Progress Bar Styling */
+        #upload-status-container { margin-top: 12px; display: none; text-align: left; }
+        .progress-bar-bg { background: #e0e0e0; border-radius: 6px; height: 12px; width: 100%; overflow: hidden; margin-top: 6px; }
+        .progress-bar-fill { background: #2ecc71; height: 100%; width: 0%; transition: width 0.1s ease-in-out; }
+        .progress-text { font-size: 0.85em; color: #555; display: flex; justify-content: space-between; }
+
+        /* Modal Pop-up Styling */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 20px; border-radius: 12px; max-width: 95%; width: 850px; max-height: 90vh; text-align: center; position: relative; box-shadow: 0 5px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; }
+        .modal-header { font-weight: bold; margin-bottom: 15px; font-size: 1.1em; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .close-modal { background: #e74c3c; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .upload-conflict-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+        .upload-conflict-actions button { border: 0; border-radius: 6px; padding: 9px 14px; color: white; font-weight: bold; cursor: pointer; }
+        .preview-container { background: #000; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%; overflow: auto; max-height: 75vh; }
+        .preview-container img, .preview-container video { max-width: 100%; max-height: 70vh; display: block; margin: auto; }
+        .text-preview { background: #1e1e1e; color: #d4d4d4; text-align: left; padding: 15px; font-family: monospace; font-size: 0.9em; white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 70vh; overflow-y: auto; border-radius: 8px; }
+
+        /* Map Tree Viewer Styling */
+        .map-tree-view { text-align: left; background: #fafafa; padding: 15px; border-radius: 8px; max-height: 70vh; overflow-y: auto; font-family: monospace; font-size: 0.95em; border: 1px solid #ddd; }
+        .tree-folder { color: #d35400; font-weight: bold; margin: 4px 0; }
+        .tree-file { color: #2c3e50; margin: 2px 0 2px 20px; }
+        .tree-sub { margin-left: 20px; border-left: 2px dashed #ddd; padding-left: 8px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="top-nav-bar">
+        <div class="nav-left">
+            <h3>🏠 File Repository Service</h3>
+            <div style="margin-top: 5px; line-height: 1.5;">
+                <a href="{{ url_for('browse_root') }}">Root</a> /
+                {% if current_rel_path %}
+                    {% set parts = current_rel_path.split('/') %}
+                    {% for part in parts if part %}
+                        {% set accum = parts[:loop.index]|join('/') %}
+                        <a href="{{ url_for('browse_sub', req_path=accum) }}">{{ part }}</a> /
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+        <div class="nav-buttons">
+            <button type="button" id="genMapBtn" class="map-btn" style="background:#27ae60;" onclick="triggerGenerateMap()">⚙️ (Re)Generate Map</button>
+            <button class="map-btn" onclick="openMapModal()">🗺️️ View Repository Map</button>
+        </div>
+    </div>
+
+    <div class="upload-zone" id="drop-zone">
+        <p>Drag & drop files or <b>entire folders</b> here to upload</p>
+        <div class="btn-row">
+            <label class="file-input-label">📁 Select Files<input type="file" id="file-picker" multiple></label>
+            <label class="file-input-label" style="background:#9b59b6;">
+            📦 Select Folder
+            <input type="file" id="folderInput" webkitdirectory directory style="display: none;" onchange="handleFolderSelect(event)">
+            </label>
+        </div>
+        <div id="upload-status-container">
+            <div class="progress-text">
+                <span id="upload-status-text">Uploading...</span>
+                <span id="upload-percentage">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="actions-bar">
+        <form action="{{ url_for('make_folder', req_path=current_rel_path) if current_rel_path else url_for('make_folder_root') }}" method="post">
+            <input type="text" name="folder_name" placeholder="New Folder Name" required>
+            <button type="submit" style="background:#2ecc71; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">➕ Create Folder</button>
+        </form>
+
+    </div>
+
+    <div class="search-container" style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+        <input type="text" id="searchInput" placeholder="Search for files..." style="padding: 5px; width: 200px;">
+        <button onclick="performSearch()" id="searchBtn" style="padding: 5px 12px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Search Map</button>
+        <span id="searchStatus" style="font-style: italic; color: #666; font-size: 0.9em; display: none;">Searching map...</span>
+    </div>
+
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Size</th><th>Last Modified</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="file-table-body">
+            {% if current_rel_path %}
+                {% set parts = current_rel_path.split('/') %}
+                {% set parent = parts[:-1]|join('/') if parts|length > 1 else '' %}
+                <tr><td colspan="4"><a href="{{ url_for('browse_sub', req_path=parent) if parent else url_for('browse_root') }}">🔙 .. (Parent Directory)</a></td></tr>
+            {% endif %}
+            {% for item in items %}
+            <tr class="file-row" data-name="{{ item.name }}" data-isdir="{{ item.is_dir|lower }}">
+                <td>
+                    {% if item.is_dir %}
+                        <a href="{{ url_for('browse_sub', req_path=item.rel_path) }}" style="color:#d35400; font-weight:bold; text-decoration:none;">📁 {{ item.name }}</a>
+                    {% else %}
+                        <span style="color:#2c3e50;">📄 {{ item.name }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ item.size if not item.is_dir else '-' }}</td>
+                <td>{{ item.modified }}</td>
+                <td>
+                    {% if not item.is_dir %}
+                        <a href="{{ url_for('download_file', req_path=item.rel_path) }}" class="action-link download-link" download>📥 Download</a>
+                        <a class="action-link preview-link" onclick="openPreview('{{ item.name }}', '{{ url_for("download_file", req_path=item.rel_path) }}')">👀 Preview</a>
+                    {% else %}
+                        <a href="{{ url_for('download_folder', req_path=item.rel_path) }}" class="action-link download-link">📦 Download Zip</a>
+                    {% endif %}
+                    <form action="{{ url_for('delete_item', req_path=item.rel_path) }}" method="post" style="display:inline; margin:0;" onsubmit="return confirm('Move this item to the deleted_files archive?');">
+                        <button type="submit" class="delete-btn">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="modal-overlay" id="upload-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="upload-conflict-title">
+    <div class="modal-content" style="width: 560px; text-align: left;">
+        <div class="modal-header" id="upload-conflict-title">Upload items already exist</div>
+        <p id="upload-conflict-message">Merge keeps existing folders, adds new items, and overwrites files at matching paths. Rename adds a numbered suffix such as "(1)".</p>
+        <ul id="upload-conflict-list" style="max-height: 35vh; overflow-y: auto; word-break: break-word;"></ul>
+        <div class="upload-conflict-actions">
+            <button type="button" data-upload-conflict-action="cancel" style="background:#7f8c8d;">Cancel upload</button>
+            <button type="button" data-upload-conflict-action="overwrite" style="background:#e67e22;">Merge folder / overwrite files</button>
+            <button type="button" data-upload-conflict-action="rename" style="background:#2980b9;">Rename with suffix</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Pop-up Pane for Previews -->
+<div class="modal-overlay" id="previewModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span id="modalTitle">👀 Previewing</span>
+            <button class="close-modal" onclick="closePreview()">×</button>
+        </div>
+        <div class="preview-container" id="modalBody">
+            <!-- Dynamic Preview Content inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- Modal Pop-up Pane for Repository Map -->
+<div class="modal-overlay" id="mapModal">
+    <div class="modal-content" style="width: 800px;">
+        <div class="modal-header">
+            <span>🗺️ Repository Structure Map</span>
+            <button class="close-modal" onclick="closeMapModal()">×</button>
+        </div>
+        <div class="map-tree-view" id="mapTreeBody">
+            Loading repository map...
+        </div>
+    </div>
+</div>
+
+<!-- Multiple Matches Modal -->
+<div id="searchModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: white; padding: 20px; border-radius: 8px; width: 500px; max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+        <h3>Multiple Matches Found</h3>
+        <p style="color: #666; font-size: 0.9em;">Click any path below to jump straight to that folder:</p>
+        <ul id="matchList" style="list-style-type: none; padding: 0; margin: 15px 0;"></ul>
+        <button onclick="document.getElementById('searchModal').style.display='none'" style="padding: 6px 14px; background: #e74c3c; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+    </div>
+</div>
+
+<script>
+ async function triggerGenerateMap() {
+        const btn = document.getElementById('genMapBtn');
+        const originalText = btn.innerText;
+
+        btn.innerText = "⏳ Generating Map...";
+        btn.disabled = true;
+
+        try {
+            const response = await fetch('/map/generate', { method: 'POST' });
+            if (response.ok) {
+                btn.innerText = "✅ Map Updated!";
+                setTimeout(() => {
+                    window.location.reload();
+                }, 800);
+            } else {
+                throw new Error("Server responded with an error");
+            }
+        } catch (err) {
+            alert("Failed to generate map. Check server logs.");
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    if (typeof window.dropZoneInitialized === 'undefined') {
+        window.dropZoneInitialized = true;
+        const dropZone = document.getElementById('drop-zone');
+        const filePicker = document.getElementById('file-picker');
+        const folderPicker = document.getElementById('folderInput');
+        const statusContainer = document.getElementById('upload-status-container');
+        const statusText = document.getElementById('upload-status-text');
+        const percentageText = document.getElementById('upload-percentage');
+        const progressBarFill = document.getElementById('progress-bar-fill');
+        const currentRelPath = "{{ current_rel_path }}";
+
+        if (dropZone) {
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('dragover');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('dragover');
+                }, false);
+            });
+
+            dropZone.addEventListener('drop', async (e) => {
+                const dt = e.dataTransfer;
+                let filesToUpload = [];
+
+                statusContainer.style.display = 'block';
+                statusText.innerText = 'Scanning dropped items...';
+                percentageText.innerText = '0%';
+                progressBarFill.style.width = '0%';
+
+                // 1. Synchronously gather all entry handles BEFORE any 'await' call yields execution
+                let entries = [];
+                if (dt && dt.items) {
+                    for (let i = 0; i < dt.items.length; i++) {
+                        let entry = dt.items[i].webkitGetAsEntry ? dt.items[i].webkitGetAsEntry() : null;
+                        if (entry) {
+                            entries.push(entry);
+                        }
+                    }
+                }
+
+                // 2. Now traverse the extracted handles asynchronously without losing references
+                if (entries.length > 0) {
+                    for (let i = 0; i < entries.length; i++) {
+                        await traverseFileTree(entries[i], "", filesToUpload);
+                    }
+                } else if (dt && dt.files) {
+                    for (let i = 0; i < dt.files.length; i++) {
+                        filesToUpload.push(dt.files[i]);
+                    }
+                }
+
+                if (filesToUpload.length > 0) {
+                    window.uploadFiles(filesToUpload);
+                } else {
+                    statusContainer.style.display = 'none';
+                }
+            });
+        }
+
+        if (filePicker) filePicker.addEventListener('change', (e) => window.uploadFiles(e.target.files));
+    }
+
+        async function traverseFileTree(item, path, fileList) {
+            if (item.isFile) {
+                let file = await new Promise((resolve) => item.file(resolve));
+                if (file.name === '.DS_Store' || file.name === 'Thumbs.db') return;
+
+                Object.defineProperty(file, 'webkitRelativePath', {
+                    value: path ? path + "/" + file.name : file.name,
+                    writable: true,
+                    configurable: true
+                });
+                fileList.push(file);
+            } else if (item.isDirectory) {
+                let dirReader = item.createReader();
+                let entries = await readAllDirectoryEntries(dirReader);
+                for (let i = 0; i < entries.length; i++) {
+                    await traverseFileTree(entries[i], path ? path + "/" + item.name : item.name, fileList);
+                }
+            }
+        }
+
+        async function readAllDirectoryEntries(dirReader) {
+            let entries = [];
+            let readEntries = async () => {
+                let results = await new Promise((resolve, reject) => dirReader.readEntries(resolve, reject));
+                if (results.length > 0) {
+                    entries.push(...results);
+                    await readEntries();
+                }
+            };
+            await readEntries();
+            return entries;
+        }
+
+        window.uploadFiles = async function(files) {
+            const statusContainer = document.getElementById('upload-status-container');
+            const statusText = document.getElementById('upload-status-text');
+            const percentageText = document.getElementById('upload-percentage');
+            const progressBarFill = document.getElementById('progress-bar-fill');
+            const currentRelPath = "{{ current_rel_path }}";
+
+            if (!files || files.length === 0) {
+                statusContainer.style.display = 'none';
+                return;
+            }
+
+            const MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024;
+            let validFiles = [];
+            let oversizedFiles = [];
+
+            for (let i = 0; i < files.length; i++) {
+                if (files[i].size > MAX_SINGLE_FILE_BYTES) {
+                    oversizedFiles.push({
+                        name: files[i].name,
+                        sizeMB: (files[i].size / (1024 * 1024)).toFixed(1)
+                    });
+                } else {
+                    validFiles.push(files[i]);
+                }
+            }
+
+            if (oversizedFiles.length > 0) {
+                let listStr = oversizedFiles.map(f => `• ${f.name} (${f.sizeMB} MB)`).join('\n');
+                let msg = `The following file(s) exceed the 100MB size limit:\n\n${listStr}\n\nDo you want to skip these oversized files and continue uploading the rest?`;
+
+                if (!confirm(msg)) {
+                    statusContainer.style.display = 'none';
+                    return;
+                }
+            }
+
+            if (validFiles.length === 0) {
+                alert("No valid files left to upload after filtering oversized items.");
+                statusContainer.style.display = 'none';
+                return;
+            }
+
+            files = validFiles;
+
+            statusContainer.style.display = 'block';
+            statusText.innerText = 'Checking for existing items...';
+            percentageText.innerText = '0%';
+            progressBarFill.style.width = '0%';
+
+            let conflictAction = '';
+            const uploadPaths = Array.from(files, file => file.webkitRelativePath || file.name);
+            const folderRoots = [...new Set(uploadPaths
+                .filter(path => path.includes('/'))
+                .map(path => path.split('/')[0]))];
+            let folderRenames = {};
+            try {
+                const checkUrl = currentRelPath ? `/upload/check/${currentRelPath}` : '/upload/check/';
+                const response = await fetch(checkUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paths: uploadPaths, folder_roots: folderRoots })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || `Conflict check failed with status ${response.status}.`);
+                }
+                folderRenames = result.folder_renames || {};
+                const conflicts = [
+                    ...(result.folder_conflicts || []).map(path => `Folder: ${path}`),
+                    ...(result.conflicts || [])
+                ];
+                if (conflicts.length > 0) {
+                    conflictAction = await chooseUploadConflictAction(conflicts);
+                    if (conflictAction === 'cancel') {
+                        statusContainer.style.display = 'none';
+                        return;
+                    }
+                }
+            } catch (error) {
+                statusText.innerText = 'Could not check for existing items.';
+                statusContainer.style.display = 'none';
+                alert(`Upload canceled: ${error.message}`);
+                return;
+            }
+            const uploadFolderRoots = conflictAction === 'rename'
+                ? folderRoots.map(root => folderRenames[root] || root)
+                : folderRoots;
+
+            statusText.innerText = `Preparing upload (${files.length} items found)...`;
+            const MAX_BATCH_BYTES = 5 * 1024 * 1024;
+            let batches = [];
+            let currentBatchFiles = [];
+            let currentBatchSize = 0;
+
+            for (let i = 0; i < files.length; i++) {
+                let fSize = files[i].size || 1;
+                if (currentBatchSize + fSize > MAX_BATCH_BYTES && currentBatchFiles.length > 0) {
+                    batches.push(currentBatchFiles);
+                    currentBatchFiles = [];
+                    currentBatchSize = 0;
+                }
+                currentBatchFiles.push(files[i]);
+                currentBatchSize += fSize;
+            }
+            if (currentBatchFiles.length > 0) {
+                batches.push(currentBatchFiles);
+            }
+
+            let totalBatches = batches.length;
+            let currentBatchIndex = 0;
+
+            function uploadNextBatch() {
+                if (currentBatchIndex >= totalBatches) {
+                    statusText.innerText = 'Upload complete!';
+                    progressBarFill.style.width = '100%';
+                    percentageText.innerText = '100%';
+                    setTimeout(() => window.location.reload(), 600);
+                    return;
+                }
+
+                let batchFiles = batches[currentBatchIndex];
+                let formData = new FormData();
+
+                for (let i = 0; i < batchFiles.length; i++) {
+                    let path = batchFiles[i].webkitRelativePath || batchFiles[i].name;
+                    const pathParts = path.split('/');
+                    if (conflictAction === 'rename' && folderRenames[pathParts[0]]) {
+                        pathParts[0] = folderRenames[pathParts[0]];
+                        path = pathParts.join('/');
+                    }
+                    formData.append('files[]', batchFiles[i]);
+                    formData.append('paths[]', path);
+                }
+                uploadFolderRoots.forEach(root => formData.append('folder_roots[]', root));
+                formData.append('conflict_action', conflictAction);
+
+                let url = currentRelPath ? `/upload/${currentRelPath}` : '/upload/';
+                sendBatch(url, formData, conflictAction, 0);
+            }
+
+            function sendBatch(url, formData, action, retryCount) {
+                formData.set('conflict_action', action);
+                let xhr = new XMLHttpRequest();
+                xhr.open('POST', url, true);
+
+                xhr.upload.onprogress = function(e) {
+                    if (e.lengthComputable) {
+                        let batchPercent = e.loaded / e.total;
+                        let overallPercent = Math.round(((currentBatchIndex + batchPercent) / totalBatches) * 100);
+                        progressBarFill.style.width = overallPercent + '%';
+                        percentageText.innerText = overallPercent + '%';
+                        statusText.innerText = `Uploading batch ${currentBatchIndex + 1} of ${totalBatches}...`;
+                    }
+                };
+
+                xhr.onload = async function() {
+                    if (xhr.status === 200) {
+                        currentBatchIndex++;
+                        uploadNextBatch();
+                        return;
+                    }
+
+                    let result = {};
+                    try {
+                        result = JSON.parse(xhr.responseText);
+                    } catch (error) {
+                        // Non-JSON server errors are reported using the HTTP status below.
+                    }
+
+                    if (xhr.status === 409 && result.status === 'conflict' && result.conflicts) {
+                        const nextAction = await chooseUploadConflictAction(result.conflicts);
+                        if (nextAction === 'cancel') {
+                            statusText.innerText = 'Upload canceled.';
+                            statusContainer.style.display = 'none';
+                            return;
+                        }
+                        sendBatch(url, formData, nextAction, 0);
+                    } else if (retryCount < 2 && xhr.status >= 500) {
+                        statusText.innerText = `Retrying batch ${currentBatchIndex + 1} (Attempt ${retryCount + 1})...`;
+                        setTimeout(() => sendBatch(url, formData, action, retryCount + 1), 2000);
+                    } else {
+                        const message = result.message || `Upload failed with server status ${xhr.status}.`;
+                        statusText.innerText = message;
+                        progressBarFill.style.background = "#e74c3c";
+                        alert(message);
+                    }
+                };
+
+                xhr.onerror = function() {
+                    statusText.innerText = 'Network error while uploading.';
+                    progressBarFill.style.background = "#e74c3c";
+                    alert('A network error occurred while uploading files.');
+                };
+
+                xhr.send(formData);
+            }
+
+            uploadNextBatch();
+        }
+    
+
+    function chooseUploadConflictAction(conflicts) {
+        const modal = document.getElementById('upload-conflict-modal');
+        const list = document.getElementById('upload-conflict-list');
+        const message = document.getElementById('upload-conflict-message');
+        list.replaceChildren();
+        conflicts.slice(0, 10).forEach(path => {
+            const item = document.createElement('li');
+            item.textContent = path;
+            list.appendChild(item);
+        });
+        if (conflicts.length > 10) {
+            const remaining = document.createElement('li');
+            remaining.textContent = `...and ${conflicts.length - 10} more`;
+            list.appendChild(remaining);
+        }
+        message.textContent = `${conflicts.length} selected item(s) already exist. Merge keeps existing folders, adds new items, and overwrites files at matching paths. Rename adds a numbered suffix such as "(1)".`;
+        modal.style.display = 'flex';
+
+        return new Promise(resolve => {
+            const finish = action => {
+                modal.style.display = 'none';
+                modal.querySelectorAll('[data-upload-conflict-action]').forEach(button => {
+                    button.removeEventListener('click', onAction);
+                });
+                modal.removeEventListener('click', onBackdrop);
+                resolve(action);
+            };
+            const onAction = event => finish(event.currentTarget.dataset.uploadConflictAction);
+            const onBackdrop = event => {
+                if (event.target === modal) finish('cancel');
+            };
+            modal.querySelectorAll('[data-upload-conflict-action]').forEach(button => {
+                button.addEventListener('click', onAction);
+            });
+            modal.addEventListener('click', onBackdrop);
+        });
+    }
+
+    // Modal Preview Handlers (Fixed unified conditional chain)
+    async function openPreview(name, fileUrl) {
+        const modal = document.getElementById('previewModal');
+        const title = document.getElementById('modalTitle');
+        const body = document.getElementById('modalBody');
+
+        title.innerText = "👀 Previewing: " + name;
+        body.innerHTML = '<div style="color:white; padding:20px;">Loading preview...</div>';
+        modal.style.display = 'flex';
+
+        const ext = name.split('.').pop().toLowerCase();
+        const standardImgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
+        const tiffExts = ['tif', 'tiff'];
+        const vidExts = ['mp4', 'webm', 'ogg', 'mkv'];
+        const textExts = ['txt', 'md', 'json', 'csv', 'py', 'html', 'css', 'js', 'xml', 'log', 'ini', 'cfg'];
+        const pdfExts = ['pdf'];
+        const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
+
+        if (standardImgExts.includes(ext)) {
+            body.innerHTML = `<img src="${fileUrl}">`;
+        } else if (tiffExts.includes(ext)) {
+            try {
+                const response = await fetch(fileUrl);
+                const buffer = await response.arrayBuffer();
+                const ifds = UTIF.decode(buffer);
+                const firstIFD = ifds[0];
+                UTIF.decodeImage(buffer, firstIFD);
+                const rgba = UTIF.toRGBA8(firstIFD);
+                const canvas = document.createElement('canvas');
+                canvas.width = firstIFD.width;
+                canvas.height = firstIFD.height;
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(canvas.width, canvas.height);
+                imgData.data.set(new Uint8ClampedArray(rgba));
+                ctx.putImageData(imgData, 0, 0);
+                body.innerHTML = '';
+                body.appendChild(canvas);
+                canvas.style.maxWidth = '100%';
+                canvas.style.maxHeight = '70vh';
+            } catch (err) {
+                body.innerHTML = `<div style="color:white; padding:40px;">Could not render TIFF file. Use the green "Download" button instead.</div>`;
+            }
+        } else if (vidExts.includes(ext)) {
+            body.innerHTML = `<video controls autoplay name="media"><source src="${fileUrl}" type="video/mp4">Your browser does not support playing this file inline.</video>`;
+        } else if (pdfExts.includes(ext)) {
+            body.innerHTML = `<iframe src="${fileUrl}" style="width: 100%; height: 70vh; border: none; border-radius: 4px;" type="application/pdf"></iframe>`;
+        } else if (audioExts.includes(ext)) {
+            body.innerHTML = `<div style="padding: 40px; text-align: center;"><audio controls autoplay style="width: 100%; max-width: 400px;"><source src="${fileUrl}">Your browser does not support the audio element.</audio></div>`;
+        } else if (textExts.includes(ext)) {
+            try {
+                const response = await fetch(fileUrl);
+                const text = await response.text();
+                const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                body.innerHTML = `<pre class="text-preview">${safeText}</pre>`;
+            } catch (err) {
+                body.innerHTML = `<div style="color:white; padding:40px;">Could not load text file.</div>`;
+            }
+        } else {
+            body.innerHTML = `<div style="color:white; padding:40px;">Preview window only supports Images, PDFs, Audio, MP4 videos, and Text files. Use the green "Download" button to get this item.</div>`;
+        }
+    }
+
+    function closePreview() {
+        const modal = document.getElementById('previewModal');
+        const body = document.getElementById('modalBody');
+        modal.style.display = 'none';
+        body.innerHTML = '';
+    }
+
+    // Repository Map Modal Handlers
+    async function openMapModal() {
+        document.getElementById('mapModal').style.display = 'flex';
+        await refreshRepoMap(false);
+    }
+
+    function renderRepoMap(nodeObj, name = "shared_files", currentPath = "shared_files") {
+        // If we are at the root container object containing top-level keys like "shared_files"
+        if (nodeObj && nodeObj.files === undefined && nodeObj.subfolders === undefined) {
+            let keys = Object.keys(nodeObj);
+            let html = "";
+            keys.forEach(key => {
+                html += renderRepoMap(nodeObj[key], key, key);
+            });
+            return html;
+        }
+
+        let isHighlighted = currentHighlightedFolders && currentHighlightedFolders.includes(currentPath);
+        let textColor = isHighlighted ? "color: green; font-weight: bold;" : "color: #d35400;";
+        let highlightAttr = isHighlighted ? 'data-highlighted="true"' : '';
+
+        let fileCount = (nodeObj && nodeObj.files !== undefined) ? nodeObj.files : 0;
+        let subfolders = (nodeObj && nodeObj.subfolders) ? nodeObj.subfolders : {};
+
+        // Calculate relative path for browsing (everything after 'shared_files/')
+        let relPath = currentPath === "shared_files" ? "" : currentPath.substring(13);
+        let targetUrl = relPath ? `/browse/${encodeURIComponent(relPath)}` : `/`;
+
+        let html = `<div class="tree-folder" ${highlightAttr}>` +
+                `<a href="${targetUrl}" style="text-decoration: none; ${textColor}" title="Click to browse this folder">📁 ${name}</a> ` +
+                `<span style="font-size: 0.85em; color: #7f8c8d; font-weight: normal;">(${fileCount} file${fileCount === 1 ? '' : 's'})</span>` +
+                `</div>`;
+
+        html += `<div class="tree-sub" style="margin-left: 20px;">`;
+
+        const subKeys = Object.keys(subfolders).sort();
+
+        subKeys.forEach(key => {
+            let childPath = `${currentPath}/${key}`;
+            html += renderRepoMap(subfolders[key], key, childPath);
+        });
+
+        html += `</div>`;
+        return html;
+    }
+
+    async function refreshRepoMap(shouldOpenModal = false) {
+        const modal = document.getElementById('mapModal');
+        const body = document.getElementById('mapTreeBody');
+
+        if (shouldOpenModal) {
+            modal.style.display = 'flex';
+        }
+
+        if (modal.style.display === 'flex' && !body.innerHTML.includes('tree-folder')) {
+            body.innerHTML = 'Loading repository map...';
+        }
+
+        try {
+            const response = await fetch('/map/data');
+            if (!response.ok) throw new Error("Could not load map data.");
+            const mapData = await response.json();
+            body.innerHTML = renderRepoMap(mapData);
+        } catch (err) {
+            body.innerHTML = `<div style="color: #e74c3c; padding: 20px;">Failed to load map. Try clicking "(Re)Generate Map" first.</div>`;
+        }
+    }
+
+    let currentHighlightedFolders = [];
+
+    function performSearch() {
+        let query = document.getElementById('searchInput').value.trim();
+        if (!query) return;
+
+        let btn = document.getElementById('searchBtn');
+        let statusSpan = document.getElementById('searchStatus');
+
+        btn.disabled = true;
+        statusSpan.style.display = 'inline';
+
+        fetch(`/search?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                btn.disabled = false;
+                statusSpan.style.display = 'none';
+
+                if (data.status === 'success' && data.matches && data.matches.length > 0) {
+                    if (data.matches.length === 1) {
+                        let fullPath = data.matches[0];
+                        let lastSlash = fullPath.lastIndexOf('/');
+                        let parentDir = lastSlash !== -1 ? fullPath.substring(0, lastSlash) : '';
+                        window.location.href = `/browse/${encodeURIComponent(parentDir)}`;
+                    } else {
+                        showMultipleMatchesModal(data.matches);
+                    }
+                } else {
+                    alert("File Not Found");
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                statusSpan.style.display = 'none';
+                console.error("Search error:", err);
+                alert("File Not Found");
+            });
+    }
+
+    function showMultipleMatchesModal(matches) {
+        let listEl = document.getElementById('matchList');
+        listEl.innerHTML = '';
+
+        matches.forEach(matchPath => {
+            let lastSlash = matchPath.lastIndexOf('/');
+            let parentDir = lastSlash !== -1 ? matchPath.substring(0, lastSlash) : '';
+
+            let li = document.createElement('li');
+            li.style.marginBottom = '10px';
+            li.innerHTML = `<a href="/browse/${encodeURIComponent(parentDir)}" style="color: #2980b9; text-decoration: none; word-break: break-all;">📂 ${matchPath}</a>`;
+            listEl.appendChild(li);
+        });
+
+        document.getElementById('searchModal').style.display = 'flex';
+    }
+
+    function handleFolderSelect(e) {
+        const files = Array.from(e.target.files);
+
+        if (files.length > 0) {
+            window.uploadFiles(files);
+        }
+
+        e.target.value = '';
+    }
+
+    function closeMapModal() {
+        document.getElementById('mapModal').style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+        const modal = document.getElementById('previewModal');
+        const mapModal = document.getElementById('mapModal');
+        if (event.target === modal) {
+            closePreview();
+        }
+        if (event.target === mapModal) {
+            closeMapModal();
+        }
+    }
+</script>
+</body>
+</html>
