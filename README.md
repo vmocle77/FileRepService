@@ -103,13 +103,30 @@ Bash
 chmod +x uninstall.sh
 
 ./uninstall.sh
-🛠️ Operational Summary & Port Configuration
-Feature	Windows Deployment	Linux Deployment
-Service Engine	Windows Task Scheduler (schtasks)	systemd User Manager (systemctl --user)
-Service Name	FileRepositoryService	file-repository.service
-Execution Trigger	User Logon (ONLOGON)	User Session Start (default.target)
-Default Port	5000 (TCP)	5000 (TCP)
+
+
+🛠️ **Operational Summary & Port Configuration**
+
+ **Windows Deployment  **             
+
+Service Engine  :  Windows Task Scheduler(schtasks)    
+
+Service Name  :      FileRepositoryService	           
+
+Execution Trigger :	User Logon (ONLOGON)	           
+
+** Linux Deployment**
+
+Service Engine  :  systemd User Manager (systemctl --user)
+
+Service Name   :   file-repository.service
+
+Execution Trigger	:  User Session Start (default.target)
+
+Default Port	:	5000 (TCP)
+
 Auto-Dependency Install	Python 3.11 & Flask via winget/installer	Python 3 & Flask via distro package manager
+
 Data Safety on Uninstall	Retains all files in shared_files/	Retains all files in shared_files/
 
 Note: Ensure port 5000 is allowed through your system or network firewall (e.g., Windows Defender Firewall, ufw, or firewalld) so other devices on your local network can access the service.
